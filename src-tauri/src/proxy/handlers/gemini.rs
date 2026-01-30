@@ -419,6 +419,18 @@ pub async fn handle_generate(
     }
 }
 
+fn get_token_limits(model_id: &str) -> (i64, i64) {
+    if model_id.contains("1.5-pro") || model_id.contains("gemini-2") || model_id.contains("gemini-3") || model_id.contains("exp") {
+        (1_048_576, 65_535)
+    } else if model_id.contains("1.5-flash") {
+        (1_048_576, 65_535)
+    } else if model_id.starts_with("claude-") {
+        (200_000, 8_192)
+    } else {
+        (128_000, 8_192)
+    }
+}
+
 pub async fn handle_list_models(State(state): State<AppState>) -> Result<impl IntoResponse, (StatusCode, String)> {
     use crate::proxy::common::model_mapping::get_all_dynamic_models;
 
@@ -429,13 +441,14 @@ pub async fn handle_list_models(State(state): State<AppState>) -> Result<impl In
 
     // 转换为 Gemini API 格式
     let models: Vec<_> = model_ids.into_iter().map(|id| {
+        let (input_limit, output_limit) = get_token_limits(&id);
         json!({
             "name": format!("models/{}", id),
             "version": "001",
             "displayName": id.clone(),
             "description": "",
-            "inputTokenLimit": 128000,
-            "outputTokenLimit": 8192,
+            "inputTokenLimit": input_limit,
+            "outputTokenLimit": output_limit,
             "supportedGenerationMethods": ["generateContent", "countTokens"],
             "temperature": 1.0,
             "topP": 0.95,
