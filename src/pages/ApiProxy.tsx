@@ -22,7 +22,8 @@ import {
     Code,
     Check,
     X,
-    Edit2
+    Edit2,
+    Save
 } from 'lucide-react';
 import { AppConfig, ProxyConfig, StickySessionConfig, ExperimentalConfig } from '../types/config';
 import HelpTooltip from '../components/common/HelpTooltip';
@@ -42,6 +43,13 @@ interface ProxyStatus {
     port: number;
     base_url: string;
     active_accounts: number;
+}
+
+interface CustomPreset {
+    id: string;
+    name: string;
+    description: string;
+    mappings: Record<string, string>;
 }
 
 
@@ -130,6 +138,7 @@ function CollapsibleCard({
                         {children}
                     </div>
                 </div>
+
             </div>
         </div>
     );
@@ -169,6 +178,12 @@ export default function ApiProxy() {
 
     const [isEditingAdminPassword, setIsEditingAdminPassword] = useState(false);
     const [tempAdminPassword, setTempAdminPassword] = useState('');
+
+    // Preset selection state
+    const [selectedPreset, setSelectedPreset] = useState<string>('default');
+    const [customPresets, setCustomPresets] = useState<CustomPreset[]>([]);
+    const [isPresetManagerOpen, setIsPresetManagerOpen] = useState(false);
+    const [newPresetName, setNewPresetName] = useState('');
 
     // Modal states
 
@@ -218,6 +233,7 @@ export default function ApiProxy() {
         loadAccounts();
         loadPreferredAccount();
         loadCfStatus();
+        loadCustomPresets();
         const interval = setInterval(loadStatus, 3000);
         const cfInterval = setInterval(loadCfStatus, 5000);
         return () => {
@@ -446,37 +462,169 @@ export default function ApiProxy() {
     };
 
 
+    // 定义多个预设方案
+    const defaultPresets = useMemo(() => [
+        {
+            id: 'default',
+            name: t('proxy.router.preset_default'),
+            description: t('proxy.router.preset_default_desc'),
+            mappings: {
+                "gpt-4*": "gemini-3-pro-high",
+                "gpt-4o*": "gemini-3-flash",
+                "gpt-3.5*": "gemini-2.5-flash",
+                "o1-*": "gemini-3-pro-high",
+                "o3-*": "gemini-3-pro-high",
+                "claude-3-5-sonnet-*": "claude-sonnet-4-5",
+                "claude-3-opus-*": "claude-opus-4-5-thinking",
+                "claude-opus-4-*": "claude-opus-4-5-thinking",
+                "claude-haiku-*": "gemini-2.5-flash",
+                "claude-3-haiku-*": "gemini-2.5-flash",
+            }
+        },
+        {
+            id: 'performance',
+            name: t('proxy.router.preset_performance'),
+            description: t('proxy.router.preset_performance_desc'),
+            mappings: {
+                "gpt-4*": "claude-opus-4-5-thinking",
+                "gpt-4o*": "claude-sonnet-4-5",
+                "gpt-3.5*": "gemini-3-flash",
+                "o1-*": "claude-opus-4-5-thinking",
+                "o3-*": "claude-opus-4-5-thinking",
+                "claude-3-5-sonnet-*": "claude-sonnet-4-5",
+                "claude-3-opus-*": "claude-opus-4-5-thinking",
+                "claude-opus-4-*": "claude-opus-4-5-thinking",
+                "claude-haiku-*": "claude-sonnet-4-5",
+                "claude-3-haiku-*": "claude-sonnet-4-5",
+            }
+        },
+        {
+            id: 'cost-effective',
+            name: t('proxy.router.preset_cost'),
+            description: t('proxy.router.preset_cost_desc'),
+            mappings: {
+                "gpt-4*": "gemini-3-flash",
+                "gpt-4o*": "gemini-2.5-flash",
+                "gpt-3.5*": "gemini-2.5-flash",
+                "o1-*": "gemini-3-flash",
+                "o3-*": "gemini-3-flash",
+                "claude-3-5-sonnet-*": "gemini-3-flash",
+                "claude-3-opus-*": "gemini-3-flash",
+                "claude-opus-4-*": "gemini-3-flash",
+                "claude-haiku-*": "gemini-2.5-flash",
+                "claude-3-haiku-*": "gemini-2.5-flash",
+            }
+        },
+        {
+            id: 'balanced',
+            name: t('proxy.router.preset_balanced'),
+            description: t('proxy.router.preset_balanced_desc'),
+            mappings: {
+                "gpt-4*": "gemini-3-pro-high",
+                "gpt-4o*": "gemini-3-flash",
+                "gpt-3.5*": "gemini-2.5-flash",
+                "o1-*": "claude-sonnet-4-5",
+                "o3-*": "claude-sonnet-4-5",
+                "claude-3-5-sonnet-*": "claude-sonnet-4-5",
+                "claude-3-opus-*": "gemini-3-pro-high",
+                "claude-opus-4-*": "gemini-3-pro-high",
+                "claude-haiku-*": "gemini-2.5-flash",
+                "claude-3-haiku-*": "gemini-2.5-flash",
+            }
+        },
+    ], [t]);
+
+    const presetOptions = useMemo(() => {
+        return [...defaultPresets, ...customPresets];
+    }, [defaultPresets, customPresets]);
+
+    // Custom Presets Logic
+    const loadCustomPresets = () => {
+        try {
+            const saved = localStorage.getItem('antigravity_custom_presets');
+            if (saved) {
+                setCustomPresets(JSON.parse(saved));
+            }
+        } catch (error) {
+            console.error('Failed to load custom presets:', error);
+        }
+    };
+
+    const saveCustomPresetsToStorage = (presets: CustomPreset[]) => {
+        try {
+            localStorage.setItem('antigravity_custom_presets', JSON.stringify(presets));
+            setCustomPresets(presets);
+        } catch (error) {
+            console.error('Failed to save custom presets:', error);
+            showToast('Failed to save preset', 'error');
+        }
+    };
+
+    const handleSaveCurrentAsPreset = () => {
+        if (!appConfig?.proxy.custom_mapping || Object.keys(appConfig.proxy.custom_mapping).length === 0) {
+            showToast(t('proxy.router.no_mapping_to_save'), 'warning');
+            return;
+        }
+        if (!newPresetName.trim()) {
+            showToast(t('proxy.router.preset_name_required'), 'warning');
+            return;
+        }
+
+        const newPreset: CustomPreset = {
+            id: `custom_${Date.now()}`,
+            name: newPresetName,
+            description: t('proxy.router.custom_preset_desc'),
+            mappings: { ...appConfig.proxy.custom_mapping }
+        };
+
+        const updatedPresets = [...customPresets, newPreset];
+        saveCustomPresetsToStorage(updatedPresets);
+        setNewPresetName('');
+        setIsPresetManagerOpen(false);
+        showToast(t('proxy.router.preset_saved', { defaultValue: 'Preset saved successfully' }), 'success');
+        // Auto select the new preset
+        setSelectedPreset(newPreset.id);
+    };
+
+    const handleDeletePreset = (id: string) => {
+        const updatedPresets = customPresets.filter(p => p.id !== id);
+        saveCustomPresetsToStorage(updatedPresets);
+        if (selectedPreset === id) {
+            setSelectedPreset('default');
+        }
+    };
+
     // 应用预设映射 (通配符)
     const handleApplyPresets = async () => {
         if (!appConfig) return;
 
-        const presets: Record<string, string> = {
-            // OpenAI (通配符)
-            "gpt-4*": "gemini-3-pro-high",
-            "gpt-4o*": "gemini-3-flash",
-            "gpt-3.5*": "gemini-2.5-flash",
-            "o1-*": "gemini-3-pro-high",
-            "o3-*": "gemini-3-pro-high",
+        const selectedPresetData = presetOptions.find(p => p.id === selectedPreset);
+        if (!selectedPresetData) return;
 
-            // Claude (通配符)
-            "claude-3-5-sonnet-*": "claude-sonnet-4-5",
-            "claude-3-opus-*": "claude-opus-4-5-thinking",
-            "claude-opus-4-*": "claude-opus-4-5-thinking",
-            "claude-haiku-*": "gemini-2.5-flash",
-            "claude-3-haiku-*": "gemini-2.5-flash",
-        };
-
+        // 构造新配置
         const newConfig = {
             ...appConfig.proxy,
-            custom_mapping: { ...appConfig.proxy.custom_mapping, ...presets }
+            // 策略：覆盖同名 key，保留其他自定义 key
+            custom_mapping: { ...appConfig.proxy.custom_mapping, ...selectedPresetData.mappings }
         };
 
+        // 备份旧配置用于回滚
+        const oldConfig = { ...appConfig };
+
         try {
-            await invoke('update_model_mapping', { config: newConfig });
+            // 1. 乐观更新：立即更新 UI
             setAppConfig({ ...appConfig, proxy: newConfig });
-            showToast(t('proxy.router.presets_applied'), 'success');
+            showToast(t('proxy.router.presets_applied') + ` (${selectedPresetData.name})`, 'success');
+
+            // 2. 后台异步保存
+            await invoke('update_model_mapping', { config: newConfig });
+
+            // 3. 重新加载配置以确保一致性
+            await loadConfig();
         } catch (error) {
             console.error('Failed to apply presets:', error);
+            // 3. 失败回滚
+            setAppConfig(oldConfig);
             showToast(`${t('common.error')}: ${error}`, 'error');
         }
     };
@@ -1990,31 +2138,93 @@ print(response.text)`;
                 {
                     !configLoading && !configError && appConfig && (
                         <div className="bg-white dark:bg-base-100 rounded-xl shadow-sm border border-gray-100 dark:border-base-200 overflow-hidden">
-                            <div className="px-4 py-2.5 border-b border-gray-100 dark:border-gray-700/50 bg-gray-50/50 dark:bg-gray-800/50">
-                                <div className="flex items-center justify-between">
-                                    <div>
+                            <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-700/50 bg-gray-50/50 dark:bg-gray-800/50">
+                                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                    <div className="flex-1">
                                         <h2 className="text-base font-bold flex items-center gap-2 text-gray-900 dark:text-base-content">
                                             <BrainCircuit size={18} className="text-blue-500" />
                                             {t('proxy.router.title')}
                                         </h2>
-                                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 max-w-xl leading-relaxed">
                                             {t('proxy.router.subtitle_simple')}
                                         </p>
                                     </div>
-                                    <div className="flex items-center gap-2">
+                                    <div className="flex flex-wrap items-center gap-2 bg-white dark:bg-base-100 p-1.5 rounded-xl border border-gray-100 dark:border-gray-700/50 shadow-sm">
+                                        {/* 预设选择下拉框 */}
+                                        <div className="relative min-w-[140px]">
+                                            <select
+                                                value={selectedPreset}
+                                                onChange={(e) => setSelectedPreset(e.target.value)}
+                                                className="select select-sm w-full bg-gray-50 dark:bg-base-200 border-gray-200 dark:border-gray-700 text-xs font-medium focus:ring-1 focus:ring-blue-500 h-9 min-h-0 rounded-lg"
+                                            >
+                                                <optgroup label={t('proxy.router.built_in_presets')}>
+                                                    {defaultPresets.map(preset => (
+                                                        <option key={preset.id} value={preset.id}>
+                                                            {preset.name}
+                                                        </option>
+                                                    ))}
+                                                </optgroup>
+                                                {customPresets.length > 0 && (
+                                                    <optgroup label={t('proxy.router.custom_presets')}>
+                                                        {customPresets.map(preset => (
+                                                            <option key={preset.id} value={preset.id}>
+                                                                {preset.name}
+                                                            </option>
+                                                        ))}
+                                                    </optgroup>
+                                                )}
+                                            </select>
+                                        </div>
+
                                         <button
                                             onClick={handleApplyPresets}
-                                            className="px-3 py-1 rounded-lg text-xs font-medium transition-colors flex items-center gap-2 bg-blue-500 text-white hover:bg-blue-600 shadow-sm"
+                                            className="px-3 md:px-4 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white shadow-sm hover:shadow active:scale-95 h-9"
+                                            title={presetOptions.find(p => p.id === selectedPreset)?.description}
                                         >
-                                            <Sparkles size={14} />
-                                            {t('proxy.router.apply_presets')}
+                                            <Sparkles size={14} className="fill-white/20" />
+                                            {t('proxy.router.apply_selected')}
                                         </button>
+
+                                        <div className="w-[1px] h-5 bg-gray-200 dark:bg-gray-700 mx-1"></div>
+
+                                        {/* 添加映射预设 */}
+                                        <button
+                                            onClick={() => setIsPresetManagerOpen(true)}
+                                            className="p-2 rounded-lg text-gray-500 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 transition-all h-9 w-9 flex items-center justify-center border border-transparent hover:border-green-100 dark:hover:border-green-900/30"
+                                            title={t('proxy.router.add_preset')}
+                                        >
+                                            <Plus size={16} />
+                                        </button>
+
+                                        {/* 删除当前预设（仅自定义预设） */}
+                                        <button
+                                            onClick={() => {
+                                                if (selectedPreset.startsWith('custom_')) {
+                                                    handleDeletePreset(selectedPreset);
+                                                } else {
+                                                    showToast(t('proxy.router.cannot_delete_builtin'), 'warning');
+                                                }
+                                            }}
+                                            className={`p-2 rounded-lg transition-all h-9 w-9 flex items-center justify-center border border-transparent ${selectedPreset.startsWith('custom_')
+                                                ? 'text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 hover:border-red-100 dark:hover:border-red-900/30'
+                                                : 'text-gray-300 dark:text-gray-600 cursor-not-allowed'
+                                                }`}
+                                            title={selectedPreset.startsWith('custom_')
+                                                ? t('proxy.router.delete_preset')
+                                                : t('proxy.router.cannot_delete_builtin')}
+                                            disabled={!selectedPreset.startsWith('custom_')}
+                                        >
+                                            <Trash2 size={16} />
+                                        </button>
+
+                                        <div className="w-[1px] h-5 bg-gray-200 dark:bg-gray-700 mx-1"></div>
+
                                         <button
                                             onClick={handleResetMapping}
-                                            className="px-3 py-1 rounded-lg text-xs font-medium transition-colors flex items-center gap-2 bg-white dark:bg-base-100 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-base-200 hover:text-blue-600 dark:hover:text-blue-400 hover:border-blue-200 dark:hover:border-blue-800 shadow-sm"
+                                            className="p-2 rounded-lg text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all h-9 w-9 flex items-center justify-center border border-transparent hover:border-red-100 dark:hover:border-red-900/30"
+                                            title={t('proxy.router.reset_mapping')}
                                         >
-                                            <RefreshCw size={14} />
-                                            {t('proxy.router.reset_mapping')}
+                                            <RefreshCw size={16} />
                                         </button>
                                     </div>
                                 </div>
@@ -2064,9 +2274,15 @@ print(response.text)`;
                                     </div>
 
                                     <div className="flex items-center justify-between mb-3">
-                                        <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
-                                            <ArrowRight size={14} /> {t('proxy.router.custom_mappings')}
-                                        </h3>
+                                        <div className="flex flex-col gap-1">
+                                            <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                                                <ArrowRight size={14} /> {t('proxy.router.custom_mappings')}
+                                            </h3>
+                                            <p className="text-[9px] text-gray-500 dark:text-gray-400 leading-relaxed">
+                                                💡 支持手动输入任意模型 ID,可体验未发布模型(如 <code className="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-blue-600 dark:text-blue-400">claude-opus-4-6</code>)。
+                                                <span className="text-amber-600 dark:text-amber-400">注意:并非所有账号都支持未发布模型</span>
+                                            </p>
+                                        </div>
                                     </div>
                                     <div className="flex flex-col gap-4">
                                         {/* 当前映射列表 (置顶 2 列) */}
@@ -2093,6 +2309,7 @@ print(response.text)`;
                                                                                 options={customMappingOptions}
                                                                                 placeholder="Select..."
                                                                                 className="font-mono text-[10px] h-7 dark:bg-gray-800 border-blue-200 dark:border-blue-800"
+                                                                                allowCustomInput={true}
                                                                             />
                                                                         </div>
                                                                     ) : (
@@ -2173,6 +2390,7 @@ print(response.text)`;
                                                             options={customMappingOptions}
                                                             placeholder={t('proxy.router.select_target_model') || 'Select Target Model'}
                                                             className="font-mono text-[11px] h-8 dark:bg-gray-800"
+                                                            allowCustomInput={true}
                                                         />
                                                     </div>
                                                 </div>
@@ -2441,6 +2659,77 @@ print(response.text)`;
                     onConfirm={executeClearRateLimits}
                     onCancel={() => setIsClearRateLimitsConfirmOpen(false)}
                 />
+
+                <ModalDialog
+                    isOpen={isPresetManagerOpen}
+                    title={t('proxy.router.manage_presets_title')}
+                    onConfirm={() => setIsPresetManagerOpen(false)}
+                    confirmText={t('common.close')}
+                    type="info"
+                >
+                    <div className="space-y-6">
+                        {/* Save Current Section */}
+                        <div className="space-y-3 p-4 bg-blue-50/50 dark:bg-blue-900/10 rounded-xl border border-blue-100 dark:border-blue-900/20">
+                            <h3 className="text-sm font-bold text-gray-800 dark:text-gray-200 flex items-center gap-2">
+                                <Save size={16} className="text-blue-500" />
+                                {t('proxy.router.save_current_as_preset')}
+                            </h3>
+                            <div className="flex gap-2">
+                                <input
+                                    type="text"
+                                    value={newPresetName}
+                                    onChange={(e) => setNewPresetName(e.target.value)}
+                                    placeholder={t('proxy.router.preset_name_placeholder')}
+                                    className="input input-sm flex-1 border-gray-300 focus:border-blue-500"
+                                />
+                                <button
+                                    onClick={handleSaveCurrentAsPreset}
+                                    disabled={!newPresetName.trim()}
+                                    className="btn btn-sm btn-primary text-white"
+                                >
+                                    {t('common.save')}
+                                </button>
+                            </div>
+                            <p className="text-[10px] text-gray-500 dark:text-gray-400">
+                                {t('proxy.router.save_hint')}
+                            </p>
+                        </div>
+
+                        {/* Existing Presets List */}
+                        <div className="space-y-3">
+                            <h3 className="text-sm font-bold text-gray-800 dark:text-gray-200 px-1">
+                                {t('proxy.router.your_presets')}
+                            </h3>
+                            <div className="max-h-[300px] overflow-y-auto space-y-2 pr-1">
+                                {customPresets.length === 0 ? (
+                                    <div className="text-center py-8 text-gray-400 dark:text-gray-600 bg-gray-50 dark:bg-base-200 rounded-xl border border-dashed border-gray-200 dark:border-gray-700">
+                                        <p>{t('proxy.router.no_custom_presets')}</p>
+                                    </div>
+                                ) : (
+                                    customPresets.map(preset => (
+                                        <div key={preset.id} className="flex items-center justify-between p-3 bg-white dark:bg-base-200 border border-gray-100 dark:border-gray-700 rounded-xl hover:shadow-sm transition-all group">
+                                            <div className="flex-1 min-w-0">
+                                                <div className="font-bold text-sm text-gray-800 dark:text-gray-200 truncate">{preset.name}</div>
+                                                <div className="text-[10px] text-gray-400 dark:text-gray-500 truncate">
+                                                    {Object.keys(preset.mappings).length} {t('proxy.router.mappings_count')}
+                                                </div>
+                                            </div>
+                                            <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                <button
+                                                    onClick={() => handleDeletePreset(preset.id)}
+                                                    className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+                                                    title={t('common.delete')}
+                                                >
+                                                    <Trash2 size={16} />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </ModalDialog>
             </div >
         </div >
     );
